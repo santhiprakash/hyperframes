@@ -356,6 +356,33 @@ function entriesToCues(words: Word[]): Cue[] {
 // inter-word spaces.
 const CJK_CHAR = /[　-〿぀-ヿ㐀-䶿一-鿿豈-﫿＀-￯]/;
 
+// Thai codepoints — another spaceless script.
+const THAI_CHAR = /[\u0E00-\u0E7F]/;
+
+/**
+ * Shape-based heuristic: detect phrase-level (pre-grouped) transcripts that
+ * the whitespace check misses (CJK, Thai, single-word English captions).
+ *
+ * Word-level whisper output typically has entries 0.1–0.5 s each.
+ * Phrase-level entries (imported SRT/VTT phrases, CJK sentence segments)
+ * are typically 1 s+ each.  We use the average entry duration to distinguish.
+ */
+function isLikelyPhraseLevel(words: Word[]): boolean {
+  if (words.length <= 1) return false;
+  const total = words[words.length - 1].end - words[0].start;
+  if (total <= 0) return false;
+  const avg = total / words.length;
+  // Primary: clear separation at 0.8 s (well above word-level, well below phrase-level).
+  if (avg > 0.8) return true;
+  // CJK/Thai fallback: these scripts have no inter-token spaces, so phrase-level
+  // entries won't be caught by the whitespace check.  Use a lower threshold since
+  // CJK characters pack more meaning per unit time.
+  if (words.some((w) => CJK_CHAR.test(w.text) || THAI_CHAR.test(w.text))) {
+    return avg > 0.5;
+  }
+  return false;
+}
+
 /** Join two adjacent tokens, omitting the space across a CJK boundary. */
 function joinTokens(left: string, right: string): string {
   const a = left.at(-1) ?? "";
@@ -367,10 +394,12 @@ function joinTokens(left: string, right: string): string {
 export function wordsToCues(words: Word[], opts: WordsToCuesOptions = {}): Cue[] {
   // Phrase-level transcripts (imported .srt/.vtt cues) must keep their existing
   // cue boundaries — re-grouping would merge distinct captions and lose timing.
-  // The caller can force this via `preGrouped`; otherwise infer it from the data
-  // (any entry containing internal whitespace is a multi-word phrase, so the
-  // whole transcript is phrase-level rather than word-level whisper output).
-  const preGrouped = opts.preGrouped ?? words.some((w) => /\s/.test(w.text.trim()));
+  // The caller can force this via `preGrouped`; otherwise infer it from the data:
+  // 1) any entry with internal whitespace is a multi-word phrase, or
+  // 2) average entry duration suggests phrase-level input (shape-based),
+  //    which catches CJK/Thai transcripts where no inter-token spaces exist.
+  const preGrouped =
+    opts.preGrouped ?? (words.some((w) => /\s/.test(w.text.trim())) || isLikelyPhraseLevel(words));
   if (preGrouped) return entriesToCues(words);
 
   const maxChars = opts.maxChars ?? 42;

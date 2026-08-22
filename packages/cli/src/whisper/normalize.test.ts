@@ -307,6 +307,47 @@ Render video. Built for agents.
       { text: "No", start: 1, end: 2 },
     ]);
   });
+
+  it("detects CJK phrase-level entries by shape, not just whitespace", () => {
+    // Regression test for https://github.com/heygen-com/hyperframes/issues/3353
+    // Three Chinese phrase entries with no internal whitespace.  The old
+    // whitespace-only heuristic would miss these (no spaces in any entry),
+    // collapsing the entire transcript into a single cue.
+    const cues = wordsToCues([
+      { text: "大家好欢迎来到这里", start: 0, end: 3.0 },
+      { text: "今天我们要讨论一个问题", start: 3.5, end: 6.5 },
+      { text: "关于视频字幕的生成", start: 7.0, end: 9.5 },
+    ]);
+    expect(cues).toHaveLength(3);
+    expect(cues[0]?.text).toBe("大家好欢迎来到这里");
+    expect(cues[1]?.text).toBe("今天我们要讨论一个问题");
+    expect(cues[2]?.text).toBe("关于视频字幕的生成");
+  });
+
+  it("still groups short CJK word-level tokens into cues", () => {
+    // Many short CJK entries (word-level whisper output) should be grouped
+    // by the word-level logic, not treated as one-cue-per-entry.
+    const cues = wordsToCues(
+      Array.from({ length: 60 }, (_, i) => ({
+        text: "字",
+        start: i * 0.3,
+        end: (i + 1) * 0.3,
+      })),
+    );
+    // avg duration = 0.3 s, below both thresholds → word-level grouping.
+    // With maxChars=42, 60 single-char tokens span multiple cues.
+    expect(cues.length).toBeLessThan(60);
+    expect(cues.length).toBeGreaterThan(1);
+  });
+
+  it("detects Thai phrase-level entries by shape", () => {
+    // Thai has no inter-token spaces, same issue as CJK.
+    const cues = wordsToCues([
+      { text: "สวัสดีครับ", start: 0, end: 2.5 },
+      { text: "วันนี้เรามาพูดกัน", start: 3.0, end: 6.0 },
+    ]);
+    expect(cues).toHaveLength(2);
+  });
 });
 
 describe("whisper-cpp contraction merging", () => {
